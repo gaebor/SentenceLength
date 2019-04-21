@@ -1,2 +1,9 @@
-# SentenceLength
-fitting random walk return times to empirical data
+# Sentence Length Model
+
+See
+
+    python fit.py -h
+
+Requires https://github.com/gaebor/thextensions
+
+    pip install git+git://github.com/gaebor/thextensions
