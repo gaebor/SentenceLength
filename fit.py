@@ -72,6 +72,13 @@ def logfactorial(n):
         n-=1
     return result
 
+def constraint_mtx(k):
+    J = numpy.zeros((k, k-1), dtype=theano.config.floatX)
+    for n in range(1, k):
+        J[:n,n-1] = -1.0/numpy.sqrt(n*(n+1.0))
+        J[n,n-1] = numpy.sqrt(n/(n+1.0))
+    return J
+
 def discretize(x, min_val, dx):
     return numpy.round((x - min_val)*dx)/dx + min_val
 
@@ -266,7 +273,13 @@ def main(args):
 
         model_volume = len(k) * log_simplex_volume(order) + log_simplex_volume(len(k))
         
-        hessian = numpy.linalg.slogdet(f_hessian())[1]
+        J = numpy.zeros((len(k)*order + len(k), len(k)*order-1), dtype=theano.config.floatX)
+        for i in range(len(k)):
+            J[i*order:(i+1)*order, i*(order-1):(i+1)*(order-1)] = constraint_mtx(order)
+        J[-len(k):, -(len(k)-1):] = constraint_mtx(len(k))
+        
+        hessian = numpy.linalg.slogdet(J.transpose().dot(f_hessian()).dot(J))[1]
+        # hessian = numpy.linalg.slogdet(f_hessian())[1]
         
         invariant_cost = objective + common_entropy_term
         n_dependent_cost = model_volume + left_out_volume + \
@@ -403,8 +416,8 @@ If the model is worse than the tolerance then "inf" is printed.
                     help="Maximum number of steps for the gradient descent")
     
     parser.add_argument('-mae', "--mae", dest='mae', type=float, default=0,
-                    help="""The gradient descent stops if the Max Absolute Error of the gradient is below this threshold,
-if not positive then the MAE of the gradient is irrelevant.""")
+                    help="The gradient descent stops if the Max Absolute Error of the gradient is below this threshold," + 
+                         "if not positive then the MAE of the gradient is irrelevant.")
                     
     parser.add_argument('-e', "--eta", dest='eta', type=float, default=1,
                     help='learning rate')
@@ -425,6 +438,6 @@ if not positive then the MAE of the gradient is irrelevant.""")
                     help='swap columns in input', action='store_true')
 
     parser.add_argument("--mdl", dest="mdl", type=float, default=0.0, metavar='tolerance',
-                    help='perform MDL evaluation of the model, tolerance must a positive number.')
+                    help='perform MDL evaluation of the model if a positive number is set.')
 
     exit(main(parser.parse_args()))
