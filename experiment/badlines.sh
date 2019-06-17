@@ -25,4 +25,4 @@ then
     ADDITIONAL="$2"
 fi
 
-grep $GOOD -P "[^\t]+\t\d\t\d(\.\d)*\t([-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?|$ADDITIONAL)"
+grep $GOOD -P "[^\t]+\t[^\t]+\t([-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?|$ADDITIONAL)"

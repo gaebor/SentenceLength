@@ -4,7 +4,7 @@ DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null && pwd )"
 filename=`cut -f1 -d" " <<<"$1"`
 learned="$filename.o$2.k$3.learned"
 
-args="--iter 10000 --max 1000 --eta 1 --opt Adagrad --mae 5e-4"
+args="--iter 10000 --max 1000 --eta 0.5 --opt Adagrad --mae 1e-3 -eval"
 
 echo -n "$filename	o$2.k$3	"
 

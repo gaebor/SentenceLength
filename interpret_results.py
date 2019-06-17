@@ -2,19 +2,7 @@ from __future__ import print_function
 import sys
 import numpy
 
-def ncosts(KL, common_ent, log_volume, log_aux_volume, hessian, aux_hessian, d):
-        return KL+common_ent, d, log_volume+log_aux_volume + 0.5*hessian + 0.5*aux_hessian
-
-# def costs(KL, common_ent, log_volume, log_aux_volume, hessian, aux_hessian, d, n):
-        # return KL, common_ent, log_volume/n, log_aux_volume/n, \
-               # 0.5*hessian/n, 0.5*aux_hessian/n, (d/(2.0*n))*numpy.log(n/(2.0*numpy.pi))
-
-def cost(KL, common_ent, log_volume, log_aux_volume, hessian, aux_hessian, d, n, tol=0):
-        parts = ncosts(KL, common_ent, log_volume, log_aux_volume, hessian, aux_hessian, d)
-        parts = (max(0, parts[0] - tol), parts[1], parts[2])
-        if n == float("inf"):
-            return parts
-        return parts[0] + parts[2]/n + (parts[1]/(2.0*n))*numpy.log(n/(2.0*numpy.pi))
+from utils import cost, ncosts
 
 def disc_dim(x):
     return x if x > 1 else 0
@@ -31,22 +19,20 @@ def main(n, t, simple):
     for line in sys.stdin:
         line = line.strip().split()
         try:
-            data, order, k = line[:3]
+            data, this_info = line[:2]
             if not simple:
-                metrics = list(map(float, line[3:]))
+                metrics = list(map(float, line[2:]))
                 metrics.append(n)
                 this_cost = cost(*metrics, tol=t)
-                this_info = []
             else:
                 this_cost = mdl(int(line[1]), list(map(int, line[2].split('.'))), line[3])
-                this_info = line[3:4]
         except:
             print(*line, file=sys.stderr)
             continue
-        if data not in results or results[data][2] > this_cost:
-                results[data] = [order, k, this_cost, this_info]
+        if data not in results or results[data][1] > this_cost:
+                results[data] = [this_info, this_cost]
     for data in sorted(results):
-        print(data, *(results[data][:3] + results[data][3]))
+        print(data, results[data][0])
     return 0
 
 if __name__ == "__main__":

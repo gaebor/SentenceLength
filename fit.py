@@ -253,7 +253,7 @@ def main(args):
     else:
         common_entropy_term = 0.0
 
-    if type(args.eval)  == type([]):
+    if args.eval:
         f_eval = theano.function([], error,
                         updates=updates1,
                         givens=optimizer.givens())
@@ -276,31 +276,17 @@ def main(args):
         J = numpy.zeros((len(k)*order + len(k), len(k)*order-1), dtype=theano.config.floatX)
         for i in range(len(k)):
             J[i*order:(i+1)*order, i*(order-1):(i+1)*(order-1)] = constraint_mtx(order)
-        J[-len(k):, -(len(k)-1):] = constraint_mtx(len(k))
-        
-        hessian = numpy.linalg.slogdet(J.transpose().dot(f_hessian()).dot(J))[1]
-        # hessian = numpy.linalg.slogdet(f_hessian())[1]
-        
-        invariant_cost = objective + common_entropy_term
-        n_dependent_cost = model_volume + left_out_volume + \
-                    0.5*(hessian + left_out_hessian)
-        def total_cost(n):
-            return invariant_cost + n_dependent_cost/n + (d/(2.0*n))*numpy.log(n/(2.0*numpy.pi))
+        if len(k) > 1:
+            J[-len(k):, -(len(k)-1):] = constraint_mtx(len(k))
 
-        if len(args.eval) > 0:
-            for n in args.eval:
-                n = abs(n)
-                if n == 0:
-                    this_cost = total_cost(number_of_datapoints)
-                elif n >= 1:
-                    this_cost = total_cost(n)
-                else:
-                    this_cost = total_cost(n*number_of_datapoints)
-                print(this_cost, end=' ', file=sys.stdout)
-            print("", file=sys.stdout)
+        hessian = numpy.linalg.slogdet(J.transpose().dot(f_hessian()).dot(J))
+        if hessian[0] > 0:
+            hessian = hessian[1]
         else:
-            print(objective, common_entropy_term, model_volume, left_out_volume,
-                  hessian, left_out_hessian, d, file=sys.stdout)
+            hessian = float("inf")
+        
+        print(objective, common_entropy_term, model_volume, left_out_volume,
+                  hessian, left_out_hessian, d, file=sys.stderr)
     if args.mdl > 0:
         f_eval = theano.function([], error,
                         updates=updates1,
@@ -346,7 +332,7 @@ def main(args):
             if objective_disc < tolerance:
                 bits_min = b
                 break
-        print(bits_min, file=sys.stdout)
+        print(bits_min, file=sys.stderr)
 
     return 0
 
@@ -375,12 +361,7 @@ Writes the result to stdout and optimization info to stderr.
 Author: Gábor Borbély, License: MIT
 Contact: http://math.bme.hu/~borbely/indexeng""",
                 formatter_class=MyFormatter,
-                epilog="""During the evaluation the data size will be considered like this:
-n==0: original data size,
-0<n<1: ratio of the faked and original data size,
-n>=1: fake this concrete data size.
-
-If no data size is given, then outputs are the followings (in order):
+                epilog="""During the evaluation the outputs are the followings (in order):
     {0} KL
     {1} common entropy term
     {2} log model volume
@@ -431,8 +412,8 @@ If the model is worse than the tolerance then "inf" is printed.
     parser.add_argument('-r', "--random", dest='random', default=False,
                     help='random initial model (otherwise uniform)', action='store_true')
                                         
-    parser.add_argument('--eval', "--evaluate", dest='eval', type=float, nargs='*',
-                    default=None, help='evaluate the learned model with given n values')
+    parser.add_argument('--eval', "--evaluate", dest='eval', action='store_true',
+                    default=False, help='evaluate the learned model')
 
     parser.add_argument('-s', '--swap', dest='swap', default=False,
                     help='swap columns in input', action='store_true')

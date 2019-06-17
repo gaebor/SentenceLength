@@ -24,6 +24,12 @@ while test $# -gt 0; do
             ;;
     esac
 done
+
+dataset="$1"
+shift
+
+echo $@
+
 if [[ $USE_MDL -eq 0 ]]
 then
     echo FILENAME $N_VALUES
@@ -36,16 +42,16 @@ do
     do
         if [[ $USE_MDL -gt 0 ]]
         then
-            read -r -a result <<<"`grep ${line[0]} $2 | python interpret_results.py 2> /dev/null`"
+            read -r -a result <<<"`grep -h ${line[0]} $@ | python interpret_results.py 2> /dev/null`"
         else
             if [[ $USE_TOL -gt 0 ]]
             then
-                read -r -a result <<<"`grep ${line[0]} $2 | python interpret_results.py $n $tol`"
+                read -r -a result <<<"`grep -h ${line[0]} $@ | python interpret_results.py $n $tol`"
             else
-                read -r -a result <<<"`grep ${line[0]} $2 | python interpret_results.py $n 0`"
+                read -r -a result <<<"`grep -h ${line[0]} $@ | python interpret_results.py $n 0`"
             fi
         fi
-        echo -n " o${result[1]}.k${result[2]}"
+        echo -n " ${result[1]}"
         # read -r -a best <<<"`grep "${line[0]}	${result[1]}	${result[2]}	" < $2 | cut -f4 -d "	" | cut -f1,2 -d " "`"
         # # echo -n $best
         # echo -n "(`python -c "print((${best[0]}+${best[1]})/$tol)"`)"
@@ -57,4 +63,4 @@ do
         fi
     done
     echo
-done < $1
+done < "$dataset"
