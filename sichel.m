@@ -12,12 +12,18 @@ ReadStats[filename_, max_: 100] := Module[{x, y, ii},
   {x, y}
   ]
 
+LoadModel[filename_]:=Check[ToExpression[ReadString[filename]], {}]
+
 PrintErr[x_]:= If[Head[x] === List, 
         WriteLine[Streams["stderr"][[1]], StringJoin@@(ToString/@x)], 
         WriteLine[Streams["stderr"][[1]], ToString[x]] 
     ]
-Optimize[dataset_, max_: 100, tol_: 10^-3, eta_: 1.0, maxiter_: 1000, usehessian_: False, gamma_: -1/2, alpha0_: 1.0, theta0_: 0.5] :=
- Module[{x0 = {alpha0, theta0}, x, y, i, f, obj, grad, hessian},
+
+Optimize[dataset_, max_: 100, tol_: 10^-3, eta_: 1.0, maxiter_: 1000, usehessian_: False, gamma_: -1/2] :=
+ Module[{learned=dataset <> ".g" <> ToString[N[gamma]] <> ".learned",
+         x0, x, y, i, f, obj, grad, hessian},
+  x0 = LoadModel[learned];
+  If[Head[x0] =!= List || Length[x0] != 2, x0={10.0, 0.95}];
   {x, y} = ReadStats[Directory[] <> "/" <> dataset, max];
   f[{a_, b_}] := Sum[
         y[[i]] Log[y[[i]]/(((1 - b)^(gamma/2)*(a*b/2)^x[[i]]*BesselK[gamma + x[[i]], a])/(BesselK[gamma, a*Sqrt[1 - b]]*x[[i]]!))]
@@ -31,7 +37,7 @@ Optimize[dataset_, max_: 100, tol_: 10^-3, eta_: 1.0, maxiter_: 1000, usehessian
      x0 -= eta*LinearSolve[hessian, grad],
      x0 -= eta*grad
    ];
-   PrintErr[{i, "\t", obj, "\t", Max[Abs[grad]]}];
+   PrintErr[{"\t", i, "\t", obj, "\t", Max[Abs[grad]]}];
    If[Max[Abs[grad]] <= tol, Break[]];
    If[Head[obj] =!= Real, Return[1]];
   ];
@@ -39,8 +45,10 @@ Optimize[dataset_, max_: 100, tol_: 10^-3, eta_: 1.0, maxiter_: 1000, usehessian
       Derivative[{1, 1}][f][x0]}, {Derivative[{1, 1}][f][x0], 
       Derivative[{0, 2}][f][x0]}};
   obj = f[N[x0, 19]];
-  PrintErr[{obj, " ", 0, " ", Log[100.0], " ", 0, " ", Log[Det[hessian]], " ", 0, " ", 2}];
-  Print[x0[[1]], " ", x0[[2]]];
+  Print[obj, " ", 0, " ", Log[100.0], " ", 0, " ", Log[Det[hessian]], " ", 0, " ", 2];
+  f = OpenWrite[learned];
+  WriteLine[f, ToString[x0]];
+  Close[f];
   Return[0]
  ]
 

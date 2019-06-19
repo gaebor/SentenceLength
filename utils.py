@@ -6,8 +6,14 @@ import argparse
 import math
 import numpy
 
-
 from theano import config as tconfig
+
+def logdet(M):
+    x = numpy.linalg.slogdet(M)
+    if x[0] > 0:
+        return x[1]
+    else:
+        return float("inf")
 
 def read_stats(f, xmin=1, xmax=100, normalize=False, swap=False):
     if type(f) == type(""):
@@ -25,43 +31,6 @@ def read_stats(f, xmin=1, xmax=100, normalize=False, swap=False):
     
     factor = 1.0/y_data.sum() if normalize else 1.0
     return x_data, y_data * factor
-
-def write_model(k, alpha, p, x, probs, file=sys.stdout):
-    order = p.shape[1] # number of steps upward + 1
-    steps = numpy.arange(-1, order-1)
-    print("# k alpha m " + " ".join(("p%d" % i) for i in steps), file=file)
-    for i in range(len(k)):
-        print("#", k[i], alpha[i], p[i].dot(steps), *p[i], file=file)
-    print("# average values", alpha.dot(p.dot(steps)), *alpha.dot(p), file=file)
-
-    for i in range(len(x)):
-        print(probs[i], x[i], file=file)
-
-def load_model(file_name):
-    with open(file_name, "r") as file:        
-        comment_reader = (line[1:].strip().split() for line in file if line[0] == "#")
-        
-        header = next(comment_reader)
-        if len(header) > 4:
-            # k alpha m pm1 p0 ...
-            
-            k = []
-            alpha = []
-            p = []
-            
-            for line in comment_reader:
-                try:
-                    k.append(int(line[0]))
-                    alpha.append(float(line[1]))
-                    p.append([float(x) for x in line[3:]])
-                except:
-                    continue
-        else:
-            raise ValueError("not a model")
-        
-        return (numpy.array(k, dtype='int32'),
-                numpy.array(alpha, dtype=tconfig.floatX),
-                numpy.array(p, dtype=tconfig.floatX))
 
 def log_simplex_volume(d):
     return 0.5*numpy.log(d) - logfactorial(d-1)
