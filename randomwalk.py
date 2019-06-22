@@ -60,10 +60,10 @@ def main(args):
         order = args.order + 2 # span of steps
         k = numpy.sort(numpy.abs(numpy.array(args.k, dtype="int32")))
         if args.random:
-            x_initial = numpy.random.rand(1 if args.couple else len(k), order).astype(tconfig.floatX)
+            x_initial = numpy.random.rand(1 if args.coupled else len(k), order).astype(tconfig.floatX)
             alpha_initial = numpy.random.rand(len(k)).astype(tconfig.floatX)
         else:
-            x_initial = numpy.zeros((1 if args.couple else len(k), order)).astype(tconfig.floatX)
+            x_initial = numpy.zeros((1 if args.coupled else len(k), order)).astype(tconfig.floatX)
             alpha_initial = numpy.zeros(len(k)).astype(tconfig.floatX)
     
     k_min = min(k)
@@ -317,9 +317,9 @@ The total cost is the following, for a given data size n:
     parser.add_argument('-r', "--random", dest='random', default=False,
                     help='random initial model (otherwise uniform)', action='store_true')
 
-    # parser.add_argument('-c', "--coupled", dest='coupled', default=False,
-                    # help='couple probabilities of different k values'+
-                        # '(if more than one k value is used)', action='store_true')
+    parser.add_argument('-c', "--coupled", dest='coupled', default=False,
+                    help='couple probabilities of different k values'+
+                        '(if more than one k value is used)', action='store_true')
 
     parser.add_argument('-s', '--swap', dest='swap', default=False,
                     help='swap columns in input', action='store_true')

@@ -2,7 +2,7 @@
 
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null && pwd )"
 
-COMMAND=".experiment/learn_one.sh"
+COMMAND="$DIR/do_param.sh"
 PARGS="-j 4 --eta"
 
 if [ "$1" == "-h" ]
@@ -26,7 +26,4 @@ then
     PARGS="$2"
 fi
 
-$DIR/badlines.sh | cut -f-3 -d "	" | \
-while read -a line
-    do echo "`grep ${line[0]} experiment/datasets.txt`	${line[1]}	${line[2]}"
-done | parallel -C "	" $PARGS "$COMMAND"
+$DIR/badlines.sh | cut -f-2 -d "	" | parallel -C "	" $PARGS "$COMMAND"

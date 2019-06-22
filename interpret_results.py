@@ -20,19 +20,19 @@ def main(n, t, simple):
         line = line.strip().split()
         try:
             data, this_info = line[:2]
+            metrics = list(map(float, line[2:]))
             if not simple:
-                metrics = list(map(float, line[2:]))
                 metrics.append(n)
-                this_cost = cost(*metrics, tol=t)
+                this_cost, fit = cost(*metrics, tol=t)
             else:
-                this_cost = mdl(int(line[1]), list(map(int, line[2].split('.'))), line[3])
+                this_cost, fit = (metrics[0], 0 if metrics[0] < float("inf") else 1)
         except:
             print(*line, file=sys.stderr)
             continue
-        if data not in results or results[data][1] > this_cost:
-                results[data] = [this_info, this_cost]
+        if data not in results or results[data][2] > this_cost:
+            results[data] = [this_info, fit, this_cost]
     for data in sorted(results):
-        print(data, results[data][0])
+        print(data, *results[data])
     return 0
 
 if __name__ == "__main__":

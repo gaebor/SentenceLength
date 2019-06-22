@@ -59,5 +59,5 @@ def cost(KL, common_ent, log_volume, log_aux_volume, hessian, aux_hessian, d, n,
         parts = ncosts(KL, common_ent, log_volume, log_aux_volume, hessian, aux_hessian, d)
         parts = (max(0, parts[0] - tol), parts[1], parts[2])
         if n == float("inf"):
-            return parts
-        return parts[0] + parts[2]/n + (parts[1]/(2.0*n))*numpy.log(n/(2.0*numpy.pi))
+            return (parts, KL+common_ent)
+        return (parts[0] + parts[2]/n + (parts[1]/(2.0*n))*numpy.log(n/(2.0*numpy.pi)), KL+common_ent)

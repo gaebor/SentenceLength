@@ -13,10 +13,10 @@ then
   exit 0
 fi
 
-$DIR/badlines.sh | cut -f-3 -d "	" | \
+$DIR/badlines.sh | cut -f-2 -d "	" | \
 while read -a line
 do
-    filename="${line[0]}.o${line[1]}.k${line[2]}.learned"
+    filename="${line[0]}.${line[1]}.learned"
     echo $filename
     rm $filename
 done

@@ -28,8 +28,6 @@ done
 dataset="$1"
 shift
 
-echo $@
-
 if [[ $USE_MDL -eq 0 ]]
 then
     echo FILENAME $N_VALUES
@@ -51,14 +49,20 @@ do
                 read -r -a result <<<"`grep -h ${line[0]} $@ | python interpret_results.py $n 0`"
             fi
         fi
-        echo -n " ${result[1]}"
+        # if (( $(echo "${result[2]} < $tol" |bc -l) ))
+        # then
+            # echo -n " ${result[1]}(0)"
+        # else
+            # echo -n " ${result[1]}(${result[2]})"
+        # fi
+        echo -n " ${result[1]}(${result[2]})"
         # read -r -a best <<<"`grep "${line[0]}	${result[1]}	${result[2]}	" < $2 | cut -f4 -d "	" | cut -f1,2 -d " "`"
         # # echo -n $best
         # echo -n "(`python -c "print((${best[0]}+${best[1]})/$tol)"`)"
         # # `python -c "print(${best[3]}/$tol)"`
         if [[ $USE_MDL -gt 0 ]]
         then
-            echo -n " ${result[3]} ${result[4]}"
+            echo -n " ${result[2]}"
             break
         fi
     done
