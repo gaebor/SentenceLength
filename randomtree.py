@@ -50,40 +50,63 @@ def load_model(file_name, dtype="float32"):
             numpy.array(alpha, dtype=dtype),
             numpy.array(p, dtype=dtype))
 
+class ConcatenatedVars:
+    def __init__(self, *variables):
+        self.sizes = [v.shape for v in variables]
+        self.offsets = [0]
+        for s in self.sizes:
+            self.offsets.append(self.offsets[-1] + sum(s))
+        concatenated = numpy.concatenate([v.reshape(-1) for v in variables])
+        self.tf_var = tf.Variable(concatenated)
         
-        return (numpy.array(k, dtype='int32'),
-                numpy.array(alpha, dtype=tconfig.floatX),
-                numpy.array(p, dtype=tconfig.floatX))
-
+    def get(self):
+        _var = self.tf_var.numpy()
+        return [_var[self.offsets[i]:self.offsets[i+1]]\
+                .reshape(self.sizes[i]) for i in range(len(self.sizes))]
+    def get_tf(self):
+        return self.tf_var
+                
 def main(args):
-    learned = args.filename + ".o" + str(args.order) + ".k" + ".".join(map(str, args.k)) + ".learned"
+    learned = args.filename + ".o" + str(args.order) + (".c" if args.coupled else ".k") + ".".join(map(str, args.k)) + ".learned"
     try:
-        k, alpha_initial, x_initial = load_model(learned)
+        k, alpha_initial, x_initial = load_model(learned, dtype=args.dtype)
         alpha_initial = numpy.log(alpha_initial)
         x_initial = numpy.log(x_initial)
         if (k != numpy.array(args.k, dtype='int32')).any() or \
             x_initial.shape[1] != args.order + 2:
             print("Model \"" + learned + "\" has order", x_initial.shape[1]-2, "and k", k, file=sys.stderr)
             raise
+        if len(alpha_initial) != len(k):
+            print("Model \"" + learned + "\" has inconsistent number of mixture components: ", len(k), "!=", len(alpha_initial), file=sys.stderr)
+            raise
+        if args.coupled:
+            if len(x_initial) != 1:
+                print("Coupled model \"" + learned + "\" has too many mixture components: ", len(x_initial), "!= 1", file=sys.stderr)
+                raise
+        else:
+            if len(x_initial) != len(alpha_initial):
+                print("Non-coupled model \"" + learned + "\" has inconsistent number of mixture components: ", len(x_initial), "!=", len(alpha_initial), file=sys.stderr)
+                raise
         order = args.order + 2
     except:
         order = args.order + 2 # span of steps
         k = numpy.sort(numpy.abs(numpy.array(args.k, dtype="int32")))
         if args.random:
-            x_initial = numpy.random.rand(1 if args.coupled else len(k), order).astype(tconfig.floatX)
-            alpha_initial = numpy.random.rand(len(k)).astype(tconfig.floatX)
+            x_initial = numpy.random.rand(1 if args.coupled else len(k), order).astype(args.dtype)
+            alpha_initial = numpy.random.rand(len(k)).astype(args.dtype)
         else:
-            x_initial = numpy.zeros((1 if args.coupled else len(k), order)).astype(tconfig.floatX)
-            alpha_initial = numpy.zeros(len(k)).astype(tconfig.floatX)
+            x_initial = numpy.zeros((1 if args.coupled else len(k), order), dtype=args.dtype)
+            alpha_initial = numpy.zeros(len(k), dtype=args.dtype)
     
     k_min = min(k)
+    k_max = max(k)
     
     if k_min <= 0:
         print("ERROR: k values should be positive integers!", file=sys.stderr)
         return 1
 
     x_data, y_data = read_stats(args.filename, args.xmin, args.xmax,
-                                normalize=True, swap=args.swap)
+                                normalize=True, swap=args.swap, dtype=args.dtype)
     x_min = numpy.min(x_data)
     x_max = numpy.max(x_data)
 
@@ -98,86 +121,44 @@ def main(args):
     
     covered_weight = y_common.sum()
     left_out_dim = len(x_data) - len(intersection)
-
-    import theano
-    import theano.tensor as T
     
-    N = x_max * (order - 1) + 1 # size of the representation matrix
-    x = T.matrix()
-    p = T.nnet.softmax(x)
+    import tensorflow as tf
     
-    #                n
-    #             [X    ]
-    #             [X X  ]
-    #          2n [X X X]
-    #             [  X X]
-    #             [    X]
-    #      2n     [     ]
-    # [Y          ]
-    # [Y Y        ]
-    # [Y Y Y      ]
-    # [Y Y Y Y    ]
-    # [  Y Y Y Y  ]
-    # [    Y Y Y Y]
-    # [      Y Y Y]
-    # [        Y Y]
-    # [          Y]
-    #  .
-    #  .
-    #  .
-
-    n = order
-    # E: n * 2n * n
-    E = T.stack([T.eye(2*n, n, k=-i) for i in range(n)], axis=0)
-
-    # E0: len(k) * N * n
-    E0 = T.ones(len(k))[:, None, None]*T.eye(N, n)[None, :, :]
-
-    # P: len(k) * 2n * n
-    P = (p[:, :, None, None]*E[None, :, :, :]).sum(1)
-
-    def duplicate(x):
-        '''
-        makes a k*N*2n array from a k*N*n array
-        [X  ]           [X  |0 0]
-        [X X]  ->       [X X|0 0]
-        [  X]           [  X|X  ]
-        [   ]           [   |X X]
-        '''
-        x_ = x[:, :-n, :]
-        x__ = T.concatenate([T.zeros((len(k), n, n)), x_], axis=1)
-        return T.concatenate([x, x__], axis=2)
-
-    # x_max * len(k) * N * n
-    powers, updates1 = theano.scan(
-                            lambda x, P_: T.batched_dot(duplicate(x), P_),
-                            n_steps=x_max, outputs_info=E0,
-                            strict=True, non_sequences=[P])
-
-    # x_max * len(k) * N
-    modelled_probs = powers[:, :, :, 0]
+    variables = ConcatenatedVars(x_initial, alpha_initial)
     
-    # x_common is a list of indices
-    probs = modelled_probs[x_common - 1, :, :]
-
-    i_ = [(i*len(k) + j)*N + x_common[i] - k[j] if x_common[i] >= k[j] else -1 for i in range(len(x_common)) for j in range(len(k))]
-
-    # len(x_common) * len(k)
-    probs_ = T.concatenate([probs.reshape((-1,)), [0.0]])
-    probs = probs_[numpy.array(i_, dtype='int32')].reshape((len(x_common), len(k)))
     
-    x_shared = theano.shared(x_common)
-    # k/n coefficient
-    probs = probs*(theano.shared(k.astype(tconfig.floatX))[None, :]/x_shared[:, None])
-
-    alpha_ = T.vector()
-    alpha = T.nnet.softmax(alpha_.reshape((1, -1))).reshape((-1,))
-    generated_probs = probs.dot(alpha)
-
-    y_shared = theano.shared(y_common)
+    x = tf.Variable(x_initial)
+    alpha = tf.Variable(alpha_initial)
     
-    error = y_shared.dot(T.log(y_shared/generated_probs))
-
+    alpha_softmax = tf.nn.softmax(alpha)
+    i_range = tf.range(x_min, x_max + 1, dtype=args.dtype)
+    x_tf = tf.constant(x_common-x_min, dtype="int32")
+    k_tf = tf.constant(k, dtype=args.dtype)
+    multiplier = k_tf[:, None]/i_range[None, :]
+    y_tf = tf.constant(y_common)
+    H_common = -y_common.dot(y_common)
+    k_offset = x_min - k_max
+    # def objective(x):
+    p = tf.nn.softmax(x, 1)
+    p = tf.pad(p, [[0, 0], [0, order*x_max - p.shape[1]]])
+    
+    fp = tf.signal.rfft(p)
+    fp_power = fp[:, None, :] ** tf.cast(i_range, "complex128")[None, :, None]
+    # shape=(len(k), x_max-x_min+1, order*x_max)
+    # TODO coupled
+    powers = tf.signal.irfft(fp_power)
+    if k_max > x_min:
+        powers = tf.pad(powers, [[0, 0], [0, 0], [k_max-x_min, 0]])
+    # shape=(len(k), x_max-x_min+1)
+    probs = multiplier*tf.stack([tf.linalg.diag_part(powers[i], k=k_max-k[i]) for i in range(len(k))], axis=0)
+    # probs = multiplier.numpy()*numpy.stack([numpy.diagonal(powers[i], offset=k_max-k[i]) for i in range(len(k))], axis=0)
+    
+    # shape=(len(k), len(x_common))
+    generated_probs = tf.tensordot(alpha_softmax, tf.gather(probs, x_tf, axis=1), [0, 0])
+    
+    error = -tf.tensordot(y_tf, tf.math.log(generated_probs), 1) - H_common
+    print(generated_probs)
+    return 1
     import thextensions
     
     optimizer = eval("thextensions." + args.opt + "Optimizer")(error, x, alpha_, eta=args.eta)
@@ -209,15 +190,20 @@ def main(args):
             save_model(k, alpha_learned, p_learned, x_common, generated_probs, file=outfile)
 
     # evaluate
-    k = x_initial.shape[0]
-    # number of parameters
-    d = k * (order - 1) + k - 1
+
+    # number of model parameters
+    d = p_learned.shape[0] * (p_learned.shape[1] - 1) + len(alpha_learned) - 1
+    # number of auxiliary parameters
+    d_aux = 0
     if left_out_dim > 0:
-        d += left_out_dim - 1
+        d_aux = left_out_dim - 1
         common_entropy_term = -covered_weight*numpy.log(covered_weight) if covered_weight > 0 else 0.0
     else:
         common_entropy_term = 0.0
 
+    # model volume
+    model_volume = p_learned.shape[0] * log_simplex_volume(p_learned.shape[1]) + log_simplex_volume(len(alpha_learned))
+            
     f_eval = theano.function([], error,
                     updates=updates1,
                     givens=optimizer.givens())
@@ -238,18 +224,17 @@ def main(args):
             left_out_hessian = (1.0-covered_weight)**2/y_data[left_out]
             J_aux = constraint_mtx(left_out_dim)
             left_out_hessian = logdet(J_aux.transpose().dot(left_out_hessian[:, None]*J_aux))
-    
-    model_volume = k * log_simplex_volume(order) + log_simplex_volume(k)
-    
-    J = numpy.zeros((k*order + k, k*order-1), dtype=tconfig.floatX)
-    for i in range(k):
+        
+    # (number of parameters) * (number of free parameters)
+    J = numpy.zeros((p_learned.size + alpha_learned.size, d), dtype=tconfig.floatX)
+    for i in range(len(p_learned)):
         J[i*order:(i+1)*order, i*(order-1):(i+1)*(order-1)] = constraint_mtx(order)
-    if k > 1:
-        J[-k:, -(k-1):] = constraint_mtx(k)
-
+    if len(alpha_learned) > 1:
+        # mixing coefficients
+        J[-len(alpha_learned):, -(len(alpha_learned)-1):] = constraint_mtx(len(alpha_learned))
     hessian = logdet(J.transpose().dot(f_hessian()).dot(J))
     print(objective, common_entropy_term, model_volume, left_out_volume,
-              hessian, left_out_hessian, d, file=sys.stdout)
+              hessian, left_out_hessian, d+d_aux, file=sys.stdout)
 
     return 0
 
@@ -296,7 +281,7 @@ The total cost is the following, for a given data size n:
                      n           2 * n      2 * n       2*pi
 """)
 
-    parser.add_argument('-m', "--max", dest='xmax', type=int, default=100,
+    parser.add_argument('-m', "--max", dest='xmax', type=int, default=1000,
                     help='maximum sentence length')
     
     parser.add_argument("-min", "--min", dest='xmin', type=int, default=1,
@@ -308,14 +293,14 @@ The total cost is the following, for a given data size n:
     parser.add_argument('-o', "--order", dest='order', type=int, default=2,
                     help='how many steps can be taken upwards')
     
-    parser.add_argument('-i', "--iter", dest='iter', type=int, default=10,
+    parser.add_argument('-i', "--iter", dest='iter', type=int, default=1000,
                     help="Maximum number of steps for the gradient descent")
     
     parser.add_argument('-mae', "--mae", dest='mae', type=float, default=1e-3,
                     help="The gradient descent stops if the Max Absolute Error of the gradient is below this threshold," + 
                          "if not positive then the MAE of the gradient is irrelevant.")
 
-    parser.add_argument('-e', "--eta", dest='eta', type=float, default=1,
+    parser.add_argument('-e', "--eta", dest='eta', type=float, default=0.5,
                     help='learning rate')
 
     parser.add_argument("--opt", "--optimizer", dest='opt', type=str,

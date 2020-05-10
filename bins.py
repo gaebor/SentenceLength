@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 from __future__ import print_function
 import sys
@@ -9,18 +10,13 @@ import numpy
 from utils import *
 
 def main(args):
-    bins = sorted(args.bins)
-    if len(set(bins)) != len(bins):
-            print("duplicate in bins!", file=sys.stderr)
-            return 1
-
     x_data, y_data = read_stats(args.filename, args.xmin, args.xmax,
                                 normalize=True, swap=args.swap)
     x_min = numpy.min(x_data)
     x_max = numpy.max(x_data)
     
-    bins = [x_min] + bins + [x_max+1]
-    
+    bins = sorted(set([x_min] + args.bins + [x_max+1]))
+    print(bins, file=sys.stderr)
     bins = numpy.array(bins)
     widths = numpy.maximum(bins[1:] - bins[:-1], 0)
     
@@ -44,7 +40,7 @@ def main(args):
     number_of_parameters = len(widths)-1
     
     print(KL_term, common_entropy_term, model_volume, aux_model_volume,
-            lndethessian, aux_model_hessian, number_of_parameters, file=sys.stderr)
+            lndethessian, aux_model_hessian, number_of_parameters)
     return 0
 
 if __name__ == "__main__":
@@ -62,6 +58,9 @@ Author: Gábor Borbély, License: MIT
 Contact: http://math.bme.hu/~borbely/indexeng""",
                 formatter_class=MyFormatter)
 
+    parser.add_argument("filename", type=str, default="",
+                    help='data filename, model filename is inferred')
+    
     parser.add_argument('-m', "--max", dest='xmax', type=int, default=100,
                     help='maximum sentence length')
     
@@ -71,10 +70,7 @@ Contact: http://math.bme.hu/~borbely/indexeng""",
     parser.add_argument('-s', '--swap', dest='swap', default=False,
                     help='swap columns in input', action='store_true')
 
-    parser.add_argument('-f', "--filename", dest='filename', type=str, default="",
-                    help='data filename, model filename is inferred')
-    
     parser.add_argument('-b', '--bin', '--bins', dest='bins', default=[],
                     help='bins to use', type=int, nargs="*")
                 
-    exit(main(parser.parse_args()))
+    sys.exit(main(parser.parse_args()))

@@ -1,21 +1,19 @@
 # -*- coding: utf-8 -*-
 from __future__ import print_function
 import sys
-import argparse
 
 import math
 import numpy
-
-from theano import config as tconfig
 
 def logdet(M):
     x = numpy.linalg.slogdet(M)
     if x[0] > 0:
         return x[1]
     else:
+        # print(x[0]*numpy.exp(x[1]), file=sys.stderr)
         return float("inf")
 
-def read_stats(f, xmin=1, xmax=100, normalize=False, swap=False):
+def read_stats(f, xmin=1, xmax=100, normalize=False, swap=False, dtype="float32"):
     if type(f) == type(""):
         f = open(f, "r")
     if swap:
@@ -27,7 +25,7 @@ def read_stats(f, xmin=1, xmax=100, normalize=False, swap=False):
     data = numpy.array(data)
     
     x_data = data[:, 0].astype("int32")
-    y_data = data[:, 1].astype(tconfig.floatX)
+    y_data = data[:, 1].astype(dtype)
     
     factor = 1.0/y_data.sum() if normalize else 1.0
     return x_data, y_data * factor
@@ -42,8 +40,8 @@ def logfactorial(n):
         n-=1
     return result
 
-def constraint_mtx(k):
-    J = numpy.zeros((k, k-1), dtype=tconfig.floatX)
+def constraint_mtx(k, dtype="float32"):
+    J = numpy.zeros((k, k-1), dtype=dtype)
     for n in range(1, k):
         J[:n,n-1] = -1.0/numpy.sqrt(n*(n+1.0))
         J[n,n-1] = numpy.sqrt(n/(n+1.0))
