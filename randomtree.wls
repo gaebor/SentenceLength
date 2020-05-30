@@ -1,11 +1,11 @@
 #!/usr/bin/env wolframscript
-ReadStats[filename_, max_: 50] := Module[{x, y, ii},
+ReadStats[filename_, min_: 1, max_: 50] := Module[{x, y, ii},
   {x, y} = 
    Transpose[
     Map[ToExpression, 
      StringSplit /@ ReadList[filename, String],
       2]];
-  ii = Flatten[Position[x, _Integer?(# <= max &)]];
+  ii = Flatten[Position[x, _Integer?(min <= # <= max &)]];
   x = x[[ii]]; y = y[[ii]];
   y /= N[Total[y]];
   {x, y}
@@ -32,17 +32,17 @@ MyTiming[L_, message_:""]:=Module[{time},
     Write[stderr, PrintF[AbsoluteTime[]-time], " sec, ", PrintF[N[MemoryInUse[]]], " byte"];
 ]
 If[Length[$ScriptCommandLine] < 2, 
-    Print["Usage: datasetname x_max tol eta maxiter"];
+    Print["Usage: datasetname min max tol eta maxiter"];
     Exit[1]
   ]
 
 vars = Prepend[ToExpression[$ScriptCommandLine[[3;;]]], $ScriptCommandLine[[2]]];
-tol = If[Length[vars]<3, 10^-3, vars[[3]]];
-eta = If[Length[vars]<4, 0.1, vars[[4]]];
-maxiter = If[Length[vars]<5, 1000, vars[[5]]];
-usehessian = If[Length[vars]<6, 0, vars[[6]]];
+tol = If[Length[vars]<4, 10^-3, vars[[4]]];
+eta = If[Length[vars]<5, 0.5, vars[[5]]];
+maxiter = If[Length[vars]<6, 100, vars[[6]]];
+usehessian = If[Length[vars]<7, 0, vars[[7]]];
 
-{X, Y} = ReadStats@@If[Length[vars] <= 2, vars, vars[[;;2]]];
+{X, Y} = ReadStats@@If[Length[vars] <= 3, vars, vars[[;;3]]];
 max = Max[X];
 
 MyTiming[

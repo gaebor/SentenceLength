@@ -1,241 +1,140 @@
 # -*- coding: utf-8 -*-
-from __future__ import print_function
-import sys
-import argparse
-
-import math
-import numpy
-
+from ast import literal_eval
+import numpy, torch, torch.nn
 from utils import *
 
-def save_model(k, alpha, p, x, probs, file=sys.stdout):
-    order = p.shape[1] # number of steps upward + 1
-    steps = numpy.arange(-1, order-1)
-    print("# k alpha m " + " ".join(("p%d" % i) for i in steps), file=file)
-    for i in range(len(k)):
-        if i < len(p):
-            print("#", k[i], alpha[i], p[i].dot(steps), *p[i], file=file)
-        else:
-            print("#", k[i], alpha[i], file=file)
-    if len(p) > 1:
-        print("# average values", alpha.dot(p.dot(steps)), *alpha.dot(p), file=file)
+def load_model(filename, dtype="float64"):
+    with open(filename, "r") as f:
+        data = literal_eval(f.read())
+    x = numpy.array(data[0], dtype=dtype)
+    return x[:3], x[3:], list(data[1].keys()), numpy.array(list(data[1].values()), dtype=dtype)
 
-    for i in range(len(x)):
-        print(probs[i], x[i], file=file)
+def write_model(p1, p2, k, t, filename):
+    with open(filename, "w") as f:
+        f.write(repr([p1.tolist() + p2.tolist(), dict(zip(k, t))]))
 
-def load_model(file_name, dtype="float32"):
-    with open(file_name, "r") as file:        
-        comment_reader = (line[1:].strip().split() for line in file if line[0] == "#")
-        
-        header = next(comment_reader)
-        if len(header) > 4:
-            # k alpha m pm1 p0 ...
-            
-            k = []
-            alpha = []
-            p = []
-            
-            for line in comment_reader:
-                try:
-                    k.append(int(line[0]))
-                    alpha.append(float(line[1]))
-                    if len(line) > 3:
-                        p.append([float(x) for x in line[3:]])
-                except:
-                    continue
-        else:
-            raise ValueError("not a model")
-    
-    return (numpy.array(k, dtype='int32'),
-            numpy.array(alpha, dtype=dtype),
-            numpy.array(p, dtype=dtype))
+def P1(p1, N):
+    M = torch.zeros((N+1,)*3)
+    M[0,0,0] = 1
+    pp = torch.nn.functional.softmax(p1, dim=0)
+    M[1,0,0] = pp[0]
+    M[0,1,0] = pp[1]
+    M[0,0,1] = pp[2]
+    for n in range(2, N+1):
+        for i in range(0, n+1):
+            for j in range(0, n+1-i):
+                k = n-i-j
+                if i > 0:
+                    M[i,j,k] += M[i-1,j,k]*pp[0]
+                if j > 0:
+                    M[i,j,k] += M[i,j-1,k]*pp[1]
+                if k > 0:
+                    M[i,j,k] += M[i,j,k-1]*pp[2]
+    return M
 
-class ConcatenatedVars:
-    def __init__(self, *variables):
-        self.sizes = [v.shape for v in variables]
-        self.offsets = [0]
-        for s in self.sizes:
-            self.offsets.append(self.offsets[-1] + sum(s))
-        concatenated = numpy.concatenate([v.reshape(-1) for v in variables])
-        self.tf_var = tf.Variable(concatenated)
-        
-    def get(self):
-        _var = self.tf_var.numpy()
-        return [_var[self.offsets[i]:self.offsets[i+1]]\
-                .reshape(self.sizes[i]) for i in range(len(self.sizes))]
-    def get_tf(self):
-        return self.tf_var
-                
+def P2(p2, N):
+    M = torch.zeros((N+1,)*3)
+    M[0,0,0] = 1
+    pp = torch.nn.functional.softmax(p2, dim=0)
+    # p200, p201, p220, p211, p212, p222
+    # x^2    xy    xz    y^2   yz   z^2
+    M[2,0,0] = pp[0]
+    M[1,1,0] = pp[1]
+    M[1,0,1] = pp[2]
+    M[0,2,0] = pp[3]
+    M[0,1,1] = pp[4]
+    M[0,0,2] = pp[5]
+    for n in range(4, N+1, 2):
+        for i in range(0, n+1):
+            for j in range(0, n+1-i):
+                k = n-i-j
+                # {0, 0, 2}, {0, 1, 1}, {0, 2, 0}, {1, 0, 1}, {1, 1, 0}, {2, 0, 0}
+                if i > 1:
+                    M[i,j,k] += M[i-2,j,k]*pp[0]
+                if i > 0 and j > 0:
+                    M[i,j,k] += M[i-1,j-1,k]*pp[1]
+                if i > 0 and k > 0:
+                    M[i,j,k] += M[i-1,j,k-1]*pp[2]
+                if j > 1:
+                    M[i,j,k] += M[i,j-2,k]*pp[3]
+                if j > 0 and k > 0:
+                    M[i,j,k] += M[i,j-1,k-1]*pp[4]
+                if k > 1:
+                    M[i,j,k] += M[i,j,k-2]*pp[5]
+    return M
+
+def fn(k, n, P1, P2):
+    nnz = n > 0
+    kappa = sum(k)
+    result = torch.scalar_tensor(0)
+    if n[0] - n[2] == kappa and n[0] >= k[0] and n[1] >= k[1] and n[2] >= k[2]:
+        for i10 in range(max(k[0]-n[0], -n[1]), 1):
+            for i11 in range(max(k[1], -i10), min(n[1], n[2]-k[2]-i10)+1):
+                result += numpy.linalg.det(numpy.array([[n[0],0,0],[i10, i11, -i10-i11],[-i10+k[0]-n[0], -i11+k[1], i10+i11+k[2]]])[nnz][:, nnz])* \
+                             P1[-i10, n[1] - i11, i10 + i11]*P2[i10 - k[0] + n[0], i11 - k[1], n[2] - (i10 + i11 + k[2])]
+    return result/n[nnz].prod()
+
+def f(k, n, P1, P2):
+    kappa = sum(k)
+    result = torch.scalar_tensor(0)
+    for n0 in range(kappa, (kappa+n)//2 + 1):
+        result += fn(k, numpy.array([n0, kappa + n - 2*n0, n0 - kappa]), P1, P2)
+    return result
+
+def F(p1, p2, x, kk):
+    result = torch.zeros((len(x), len(kk)))
+    P1M = P1(p1, max(x))
+    P2M = P2(p2, max(x))
+    for i, n in enumerate(x):
+        for j, k in enumerate(kk):
+            result[i, j] = f(k, n, P1M, P2M)
+    return result
+
 def main(args):
-    learned = args.filename + ".o" + str(args.order) + (".c" if args.coupled else ".k") + ".".join(map(str, args.k)) + ".learned"
+    torch.set_default_tensor_type(torch.DoubleTensor)
+    torch.get_default_dtype()
+
+    learned = args.filename + ".tree.learned"
     try:
-        k, alpha_initial, x_initial = load_model(learned, dtype=args.dtype)
-        alpha_initial = numpy.log(alpha_initial)
-        x_initial = numpy.log(x_initial)
-        if (k != numpy.array(args.k, dtype='int32')).any() or \
-            x_initial.shape[1] != args.order + 2:
-            print("Model \"" + learned + "\" has order", x_initial.shape[1]-2, "and k", k, file=sys.stderr)
-            raise
-        if len(alpha_initial) != len(k):
-            print("Model \"" + learned + "\" has inconsistent number of mixture components: ", len(k), "!=", len(alpha_initial), file=sys.stderr)
-            raise
-        if args.coupled:
-            if len(x_initial) != 1:
-                print("Coupled model \"" + learned + "\" has too many mixture components: ", len(x_initial), "!= 1", file=sys.stderr)
-                raise
-        else:
-            if len(x_initial) != len(alpha_initial):
-                print("Non-coupled model \"" + learned + "\" has inconsistent number of mixture components: ", len(x_initial), "!=", len(alpha_initial), file=sys.stderr)
-                raise
-        order = args.order + 2
+        p1, p2, kk, t = load_model(learned, dtype="float64")
+        p1 = numpy.log(p1)
+        p2 = numpy.log(p2)
+        t = numpy.log(t)
     except:
-        order = args.order + 2 # span of steps
-        k = numpy.sort(numpy.abs(numpy.array(args.k, dtype="int32")))
-        if args.random:
-            x_initial = numpy.random.rand(1 if args.coupled else len(k), order).astype(args.dtype)
-            alpha_initial = numpy.random.rand(len(k)).astype(args.dtype)
-        else:
-            x_initial = numpy.zeros((1 if args.coupled else len(k), order), dtype=args.dtype)
-            alpha_initial = numpy.zeros(len(k), dtype=args.dtype)
+        p1 = torch.zeros(3)
+        p2 = torch.zeros(6)
+        kk = [(0,1,0), (0,0,1)]
+        t = torch.zeros(len(kk))
     
-    k_min = min(k)
-    k_max = max(k)
+    x, y = read_stats(args.filename, args.xmin, args.xmax, normalize=True, 
+                                swap=args.swap, dtype="float64")
+    y = torch.tensor(y)
     
-    if k_min <= 0:
-        print("ERROR: k values should be positive integers!", file=sys.stderr)
-        return 1
+    optimizer = eval("torch.optim." + args.opt)(lr=args.eta)
 
-    x_data, y_data = read_stats(args.filename, args.xmin, args.xmax,
-                                normalize=True, swap=args.swap, dtype=args.dtype)
-    x_min = numpy.min(x_data)
-    x_max = numpy.max(x_data)
-
-    # cut off
-    intersection = [i for i in range(len(x_data)) if x_data[i] >= k_min]
-    left_out = [i for i in range(len(x_data)) if x_data[i] < k_min]
-    
-    x_common = x_data[intersection]
-    y_common = y_data[intersection]
-    
-    entropy_nat = -y_data.dot(numpy.log(y_data))
-    
-    covered_weight = y_common.sum()
-    left_out_dim = len(x_data) - len(intersection)
-    
-    import tensorflow as tf
-    
-    variables = ConcatenatedVars(x_initial, alpha_initial)
-    
-    
-    x = tf.Variable(x_initial)
-    alpha = tf.Variable(alpha_initial)
-    
-    alpha_softmax = tf.nn.softmax(alpha)
-    i_range = tf.range(x_min, x_max + 1, dtype=args.dtype)
-    x_tf = tf.constant(x_common-x_min, dtype="int32")
-    k_tf = tf.constant(k, dtype=args.dtype)
-    multiplier = k_tf[:, None]/i_range[None, :]
-    y_tf = tf.constant(y_common)
-    H_common = -y_common.dot(y_common)
-    k_offset = x_min - k_max
-    # def objective(x):
-    p = tf.nn.softmax(x, 1)
-    p = tf.pad(p, [[0, 0], [0, order*x_max - p.shape[1]]])
-    
-    fp = tf.signal.rfft(p)
-    fp_power = fp[:, None, :] ** tf.cast(i_range, "complex128")[None, :, None]
-    # shape=(len(k), x_max-x_min+1, order*x_max)
-    # TODO coupled
-    powers = tf.signal.irfft(fp_power)
-    if k_max > x_min:
-        powers = tf.pad(powers, [[0, 0], [0, 0], [k_max-x_min, 0]])
-    # shape=(len(k), x_max-x_min+1)
-    probs = multiplier*tf.stack([tf.linalg.diag_part(powers[i], k=k_max-k[i]) for i in range(len(k))], axis=0)
-    # probs = multiplier.numpy()*numpy.stack([numpy.diagonal(powers[i], offset=k_max-k[i]) for i in range(len(k))], axis=0)
-    
-    # shape=(len(k), len(x_common))
-    generated_probs = tf.tensordot(alpha_softmax, tf.gather(probs, x_tf, axis=1), [0, 0])
-    
-    error = -tf.tensordot(y_tf, tf.math.log(generated_probs), 1) - H_common
-    print(generated_probs)
-    return 1
-    import thextensions
-    
-    optimizer = eval("thextensions." + args.opt + "Optimizer")(error, x, alpha_, eta=args.eta)
-    optimizer.init(x_initial, alpha_initial)
-    
     if args.iter > 0:
         digits = math.ceil(math.log10(args.iter + 1))
         formatstr = "\t{:0{}d}\t{:.4e}\t{:.4e}"
-        
-        MAE = T.as_tensor_variable([abs(y).max() for y in optimizer.grads]).max()
-        f_update = theano.function([], [error, MAE],
-                        updates=updates1 + optimizer.updates(),
-                        givens=optimizer.givens())
+
         mae = float('inf')
         i = 1
         print("\titer\tobjective\tMAE", file=sys.stderr)
         while mae > args.mae and i <= args.iter:
-            objective, mae = f_update()
+            optimizer.zero_grad()
+            tt = torch.nn.functional.softmax(t, dim=0)
+            objective = y.dot(numpy.log(y/F(p1, p2, x, kk).matmul(tt)))
+            objective.backward()
+            optimizer.step()
             print(formatstr.format(i, digits, objective, mae), file=sys.stderr)
             i += 1
             if not numpy.isfinite(objective):
                 break
-        f_getter = theano.function([], [alpha, p, generated_probs],
-                        updates=updates1 + optimizer.renormalize_updates(),
-                        givens=optimizer.givens())
-        alpha_learned, p_learned, generated_probs = f_getter()
+        tt = torch.nn.functional.softmax(t, dim=0)
+        p1 = torch.nn.functional.softmax(p1, dim=0)
+        p2 = torch.nn.functional.softmax(p2, dim=0)
 
-        with open(learned, "w") as outfile:
-            save_model(k, alpha_learned, p_learned, x_common, generated_probs, file=outfile)
-
-    # evaluate
-
-    # number of model parameters
-    d = p_learned.shape[0] * (p_learned.shape[1] - 1) + len(alpha_learned) - 1
-    # number of auxiliary parameters
-    d_aux = 0
-    if left_out_dim > 0:
-        d_aux = left_out_dim - 1
-        common_entropy_term = -covered_weight*numpy.log(covered_weight) if covered_weight > 0 else 0.0
-    else:
-        common_entropy_term = 0.0
-
-    # model volume
-    model_volume = p_learned.shape[0] * log_simplex_volume(p_learned.shape[1]) + log_simplex_volume(len(alpha_learned))
-            
-    f_eval = theano.function([], error,
-                    updates=updates1,
-                    givens=optimizer.givens())
-    
-    f_hessian = theano.function([], thextensions.Hessian(error, p, alpha),
-                    updates=updates1,
-                    givens=optimizer.givens())
-
-    objective = f_eval()
-    
-    left_out_hessian = 0.0
-    left_out_volume = 0.0
-    
-    if left_out_dim > 0:
-        left_out_volume = log_simplex_volume(left_out_dim)
-        if left_out_dim > 1:
-            # diagonal
-            left_out_hessian = (1.0-covered_weight)**2/y_data[left_out]
-            J_aux = constraint_mtx(left_out_dim)
-            left_out_hessian = logdet(J_aux.transpose().dot(left_out_hessian[:, None]*J_aux))
+        write_model(p1, p2, kk, tt, learned)
         
-    # (number of parameters) * (number of free parameters)
-    J = numpy.zeros((p_learned.size + alpha_learned.size, d), dtype=tconfig.floatX)
-    for i in range(len(p_learned)):
-        J[i*order:(i+1)*order, i*(order-1):(i+1)*(order-1)] = constraint_mtx(order)
-    if len(alpha_learned) > 1:
-        # mixing coefficients
-        J[-len(alpha_learned):, -(len(alpha_learned)-1):] = constraint_mtx(len(alpha_learned))
-    hessian = logdet(J.transpose().dot(f_hessian()).dot(J))
-    print(objective, common_entropy_term, model_volume, left_out_volume,
-              hessian, left_out_hessian, d+d_aux, file=sys.stdout)
-
     return 0
 
 if __name__ == "__main__":
@@ -304,10 +203,11 @@ The total cost is the following, for a given data size n:
                     help='learning rate')
 
     parser.add_argument("--opt", "--optimizer", dest='opt', type=str,
-                    choices=["Adagrad", "GradientDescent", "Hessian"], default="Adagrad")                
-    
+                    choices=["Adadelta", "Adagrad", "Adam", "Adamax", "Ftrl"
+                             "Nadam", "RMSprop", "SGD"], default="SGD")
+
     parser.add_argument("filename", type=str, default="",
-                    help='data filename, model filename is inferred')
+                    help='data filename (stdin if empty), model filename is inferred')
     
     parser.add_argument('-r', "--random", dest='random', default=False,
                     help='random initial model (otherwise uniform)', action='store_true')
@@ -319,6 +219,7 @@ The total cost is the following, for a given data size n:
     parser.add_argument('-s', '--swap', dest='swap', default=False,
                     help='swap columns in input', action='store_true')
     
-    parser.add_argument('-d', '--dtype', dest='dtype', default="float32")
+    # parser.add_argument('-d', '--dtype', dest='dtype', type=str, default="float32",
+                    # help='float representation')
     
     exit(main(parser.parse_args()))
