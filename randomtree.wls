@@ -16,10 +16,11 @@ stderr = Streams["stderr"][[1]];
 
 PrintF[x_]:=ToString[NumberForm[x, NumberFormat -> (If[#3 == "", #1, SequenceForm[#1, "E", #3]] &)]]
 
-LoadModel[filename_]:= Module[{x,t},
+LoadModel[filename_, kk_]:= Module[{x,t},
     {x, y} = Check[ToExpression[ReadString[filename]], {{},{}}];
-    If[Head[x] =!= List || Length[x] != 9 || Head[y] != Association || Length[y] == 0, 
-        x = ConstantArray[0.0, 9]; y = <| {0,0,1}->1 |>,
+    If[Head[x] =!= List || Length[x] != 9 || Head[y] != Association || Keys[y] != kk, 
+        x = ConstantArray[1.0, 9];
+        y = Map[Rule@@#&, Transpose@{kk, ConstantArray[1.0, Length[kk]]}],
         Write[stderr, "Loaded \"" <> filename <> "\""]
     ];
     {x, y}
@@ -32,15 +33,16 @@ MyTiming[L_, message_:""]:=Module[{time},
     Write[stderr, PrintF[AbsoluteTime[]-time], " sec, ", PrintF[N[MemoryInUse[]]], " byte"];
 ]
 If[Length[$ScriptCommandLine] < 2, 
-    Print["Usage: datasetname min max tol eta maxiter"];
+    Print["Usage: datasetname min max k tol eta maxiter"];
     Exit[1]
   ]
 
 vars = Prepend[ToExpression[$ScriptCommandLine[[3;;]]], $ScriptCommandLine[[2]]];
-tol = If[Length[vars]<4, 10^-3, vars[[4]]];
-eta = If[Length[vars]<5, 0.5, vars[[5]]];
-maxiter = If[Length[vars]<6, 100, vars[[6]]];
-usehessian = If[Length[vars]<7, 0, vars[[7]]];
+kk = If[Length[vars]<4, {{0,0,1}}, vars[[4]]];
+tol = If[Length[vars]<5, 10^-3, vars[[5]]];
+eta = If[Length[vars]<6, 0.5, vars[[6]]];
+maxiter = If[Length[vars]<7, 100, vars[[7]]];
+(*usehessian = If[Length[vars]<8, 0, vars[[8]]];*)
 
 {X, Y} = ReadStats@@If[Length[vars] <= 3, vars, vars[[;;3]]];
 max = Max[X];
@@ -79,8 +81,8 @@ fk[{k0_, k1_, k2_}, {n0_, n1_, n2_}] :=
 
 f[k_, n_] := Sum[fk[k, {n0, Total[k] + n - 2*n0, n0 - Total[k]}], {n0, Total[k], (Total[k] + n)/2}]
 
-learned = vars[[1]] <> ".tree.learned"
-{x, mixture} = LoadModel[learned];
+learned = vars[[1]] <> ".tree." <> StringJoin@@Riffle[Map[ToString, Flatten[kk]], ","] <> ".learned"
+{x, mixture} = LoadModel[learned, kk];
 x = Log[Join[x, Values[mixture]]];
 
 MyTiming[Hold[
@@ -118,10 +120,10 @@ For[i = 1, i <= maxiter , i++,
     Fnum = F[pp, ppp];
     denom = Y/tt.Fnum;
     obj = Y.Log[denom];
-    DG=ArrayFlatten[{{DSoftMax[tt], 0, 0}, {0, DSoftMax[pp], 0}, {0, 0, DSoftMax[ppp]}}];
+    DG=ArrayFlatten[{{DSoftMax[pp], 0, 0}, {0, DSoftMax[ppp], 0}, {0, 0, DSoftMax[tt]}}];
     grad = (-denom.Join[tt.DF[pp, ppp], Transpose[Fnum], 2]).DG;
     x -= eta*grad;
-    logdata = {i, obj, Max[Abs[grad]], AbsoluteTime[]-time, N[MemoryInUse[]]};
+    logdata = {i, obj, Max[Abs[grad]], AbsoluteTime[]-time, N[MaxMemoryUsed[]]};
     Write@@Riffle[
         Prepend[PrintF/@logdata, stderr], 
         ConstantArray["\t", Length[logdata]]
